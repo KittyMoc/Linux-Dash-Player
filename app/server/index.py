@@ -3,14 +3,14 @@
 from __future__ import print_function
 import os
 import sys
-from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer, test as _test
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import subprocess
-from SocketServer import ThreadingMixIn
+from socketserver import ThreadingMixIn
 import argparse
 
 
 parser = argparse.ArgumentParser(description='Simple Threaded HTTP server to run linux-dash.')
-parser.add_argument('--port', metavar='PORT', type=int, nargs='?', default=80,
+parser.add_argument('--port', metavar='PORT', type=int, nargs='?', default=8080,
                     help='Port to run the server on.')
 
 modulesSubPath = '/server/linux_json_api.sh'
@@ -42,7 +42,7 @@ class MainHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', contentType)
             self.end_headers()
-            self.wfile.write(data)
+            self.wfile.write(data.encode('utf-8'))
 
         except IOError:
             self.send_error(404, 'File Not Found: %s' % self.path)
