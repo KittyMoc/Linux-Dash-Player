@@ -255,6 +255,11 @@
       #wmp-play { width: 48px; height: 48px; }
     }
     @media (prefers-reduced-motion: reduce) { .wmp-screen { transition: none; } }
+
+    .wmp-lcd #wmp-src.ok  { color: #b6ff8a; }
+    .wmp-lcd #wmp-src.bad { color: #ff9d8a; }
+    .wmp-lcd #wmp-unpair { padding: 0; font: inherit; color: #93f2ff; background: none; border: 0; text-decoration: underline; cursor: pointer; }
+    .wmp-lcd #wmp-unpair:hover { color: #fff; }
   </style>
 </head>
 <body>
@@ -294,7 +299,8 @@
 
       <div class="wmp-lcd" aria-live="off">
         <span class="state" id="wmp-state">EN VIVO</span>
-        <span>DEMO · datos simulados</span>
+        <span id="wmp-src">DEMO · datos simulados</span>
+        <button id="wmp-unpair" type="button" hidden>desvincular</button>
         <span id="wmp-zoomtxt">Zoom 1.0&times;</span>
         <span id="wmp-window">ventana 8.0 s</span>
         <span class="time" id="wmp-time">00:00</span>
@@ -498,13 +504,93 @@
   })();
   </script>
 
-  <!-- ===== Modo demo (GitHub Pages): no hay backend, los datos se simulan ===== -->
-  <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.3.4/angular-mocks.js"></script>
-  <script src="demo.js"></script>
+  <!-- ===== Vínculo con el agente de tu PC (o modo demo si no hay vínculo) ===== -->
   <script>
-  /* Datos "vivos" para los gráficos (paseo aleatorio). Se registran ANTES que los
-     valores fijos de demo.js, así que tienen prioridad; el resto de módulos
-     (tablas, discos, procesos...) sigue saliendo de demo.js. */
+  (function () {
+    'use strict';
+    var KEY = 'wmpAgent', agent = null;
+
+    function valid(u, t) {
+      return typeof u === 'string' && typeof t === 'string' && /^[A-Za-z0-9_-]{16,128}$/.test(t) &&
+        (/^https:\/\/[A-Za-z0-9.-]+(:\d+)?$/i.test(u) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(u));
+    }
+
+    // 1) Enlace nuevo:  #pair=<base64url({"u": "https://mi-pc.ts.net", "t": "token"})>
+    var m = /(?:^#|&)pair=([A-Za-z0-9_-]+)/.exec(location.hash);
+    if (m) {
+      try {
+        var b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+        var d = JSON.parse(atob(b64 + '==='.slice((b64.length + 3) % 4)));
+        if (valid(d.u, d.t)) {
+          agent = { u: d.u.replace(/\/+$/, ''), t: d.t };
+          localStorage.setItem(KEY, JSON.stringify(agent));
+        }
+      } catch (e) {}
+      // El token no debe quedarse en la barra de direcciones ni en el historial
+      history.replaceState(null, '', location.pathname + location.search);
+    }
+    // 2) Vínculo guardado de una visita anterior
+    if (!agent) {
+      try {
+        var saved = JSON.parse(localStorage.getItem(KEY));
+        if (saved && valid(saved.u, saved.t)) agent = saved;
+      } catch (e) {}
+    }
+    window.__wmpAgent = agent;
+
+    var $ = function (id) { return document.getElementById(id); };
+    var src = $('wmp-src'), unpair = $('wmp-unpair');
+
+    if (!agent) {
+      // Sin vínculo: demo con datos simulados (necesita angular-mocks + demo.js)
+      document.write('<script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.3.4/angular-mocks.js"><\/script>' +
+                     '<script src="demo.js"><\/script>');
+      return;
+    }
+
+    var host = new URL(agent.u).hostname;
+    function status(kind) {
+      src.className = kind === 'ok' ? 'ok' : 'bad';
+      src.textContent = kind === 'ok' ? 'AGENTE · ' + host
+                      : kind === 'token' ? 'TOKEN NO VÁLIDO · vuelve a vincular'
+                      : 'SIN CONEXIÓN con ' + host;
+    }
+    status('ok');
+    unpair.hidden = false;
+    unpair.addEventListener('click', function () {
+      try { localStorage.removeItem(KEY); } catch (e) {}
+      location.reload();
+    });
+
+    // Las peticiones "server/?module=..." van al agente, con el token
+    angular.module('linuxDash').config(['$httpProvider', function ($httpProvider) {
+      $httpProvider.interceptors.push(['$q', function ($q) {
+        return {
+          request: function (cfg) {
+            if (/^\/?server\//.test(cfg.url)) {
+              cfg.url = agent.u + '/' + cfg.url.replace(/^\//, '');
+              cfg.headers = cfg.headers || {};
+              cfg.headers.Authorization = 'Bearer ' + agent.t;
+            }
+            return cfg;
+          },
+          response: function (r) {
+            if (r.config.url.indexOf(agent.u) === 0) status('ok');
+            return r;
+          },
+          responseError: function (r) {
+            if (r.config && r.config.url.indexOf(agent.u) === 0) status(r.status === 401 ? 'token' : 'offline');
+            return $q.reject(r);
+          }
+        };
+      }]);
+    }]);
+  })();
+  </script>
+
+  <script>
+  /* Datos "vivos" para el modo demo (paseo aleatorio). Se registran ANTES que los
+     valores fijos de demo.js, así que tienen prioridad. */
   (function () {
     function walk(start, step, min, max) {
       var v = start;
@@ -537,11 +623,14 @@
         return [200, { wlp3s0: Math.round(up()), lo: 2 }];
       });
     }]);
-
-    angular.element(document).ready(function () {
-      angular.bootstrap(document, ['wmpDemoLive', 'linuxDashDemo']);
-    });
   })();
+  </script>
+
+  <script>
+  /* Arranque: con agente vinculado -> datos reales; si no -> demo. */
+  angular.element(document).ready(function () {
+    angular.bootstrap(document, window.__wmpAgent ? ['linuxDash'] : ['wmpDemoLive', 'linuxDashDemo']);
+  });
   </script>
 </body>
 </html>
